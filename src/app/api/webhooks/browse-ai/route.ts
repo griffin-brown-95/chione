@@ -9,7 +9,7 @@ const ROBOT_TRANSFORMERS: Record<string, (payload: any) => any[]> = {
 export async function POST(request: Request) {
   try {
     const payload = await request.json();
-    const robotId = payload?.result?.robotId;
+    const robotId = payload?.task?.robotId ?? payload?.result?.robotId;
 
     const transformer = ROBOT_TRANSFORMERS[robotId];
     if (!transformer) {
