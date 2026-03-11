@@ -6,6 +6,13 @@ import dayGridPlugin from '@fullcalendar/daygrid';
 import listPlugin from '@fullcalendar/list';
 import { downloadICS, googleCalendarUrl, outlookWebUrl } from '@/lib/ics';
 
+const NGB_SPORTS: Record<string, string[]> = {
+  'ISU': ['Figure Skating', 'Speed Skating', 'Short Track Speed Skating', 'Synchronized Skating'],
+  'FIS': ['Alpine Skiing', 'Cross-Country', 'Ski Jumping', 'Freestyle/Freeski', 'Snowboard', 'Nordic Combined'],
+  'IBU': ['Biathlon'],
+  'IBSF': ['Bobsled', 'Luge', 'Skeleton'],
+};
+
 const SPORT_COLORS: Record<string, string> = {
   'Figure Skating':            '#3b82f6', // blue
   'Speed Skating':             '#f59e0b', // amber
@@ -35,6 +42,7 @@ export default function ChioneCalendar({ events }: { events: Event[] }) {
   const [sportFilter, setSportFilter] = useState<string>('All');
   const [typeFilter, setTypeFilter] = useState<string>('All');
   const [countryFilter, setCountryFilter] = useState<string>('All');
+  const [expandedNGB, setExpandedNGB] = useState<string[]>(['ISU']); // ISU expanded by default
 
   // Derive unique filter options from data
   const sports = ['All', ...Array.from(new Set(events.map(e => e.sport).filter(Boolean)))].sort();
@@ -67,6 +75,7 @@ export default function ChioneCalendar({ events }: { events: Event[] }) {
         borderRight: '1px solid #1e293b', padding: '32px 24px',
         display: 'flex', flexDirection: 'column', gap: '32px'
       }}>
+        
         {/* Logo */}
         <div>
           <div style={{ fontSize: '22px', fontWeight: 700, letterSpacing: '0.15em', color: '#e2e8f0' }}>
@@ -80,16 +89,62 @@ export default function ChioneCalendar({ events }: { events: Event[] }) {
           </div>
         </div>
 
-        {/* Sport legend */}
+        {/* NGB / Sport legend */}
         <div>
           <div style={{ fontSize: '11px', letterSpacing: '0.15em', color: '#64748b', marginBottom: '12px' }}>SPORTS</div>
-          {Object.entries(SPORT_COLORS).map(([sport, color]) => (
-            <div key={sport} style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px', cursor: 'pointer', opacity: sportFilter === sport || sportFilter === 'All' ? 1 : 0.4 }}
-              onClick={() => setSportFilter(sportFilter === sport ? 'All' : sport)}>
-              <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: color, flexShrink: 0 }} />
-              <span style={{ fontSize: '13px', color: '#94a3b8' }}>{sport}</span>
-            </div>
-          ))}
+          {Object.entries(NGB_SPORTS).map(([ngb, sports]) => {
+            const isExpanded = expandedNGB.includes(ngb);
+            const hasData = events.some(e => sports.includes(e.sport));
+            return (
+              <div key={ngb} style={{ marginBottom: '8px' }}>
+                {/* NGB header */}
+                <div
+                  onClick={() => setExpandedNGB(prev =>
+                    prev.includes(ngb) ? prev.filter(n => n !== ngb) : [...prev, ngb]
+                  )}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    cursor: 'pointer', padding: '4px 0', opacity: hasData ? 1 : 0.35
+                  }}
+                >
+                  <span style={{ fontSize: '12px', fontWeight: 600, color: '#94a3b8', letterSpacing: '0.05em' }}>
+                    {ngb}
+                  </span>
+                  <span style={{ fontSize: '10px', color: '#475569' }}>{isExpanded ? '▾' : '▸'}</span>
+                </div>
+
+                {/* Sports under this NGB */}
+                {isExpanded && (
+                  <div style={{ paddingLeft: '12px', marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    {sports.map(sport => {
+                      const sportHasData = events.some(e => e.sport === sport);
+                      const color = SPORT_COLORS[sport] ?? SPORT_COLORS['Other'];
+                      const isActive = sportFilter === sport;
+                      return (
+                        <div
+                          key={sport}
+                          onClick={() => sportHasData && setSportFilter(isActive ? 'All' : sport)}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: '8px',
+                            cursor: sportHasData ? 'pointer' : 'default',
+                            opacity: sportHasData ? (sportFilter === 'All' || isActive ? 1 : 0.4) : 0.2
+                          }}
+                        >
+                          <div style={{
+                            width: '8px', height: '8px', borderRadius: '50%',
+                            background: sportHasData ? color : '#334155', flexShrink: 0
+                          }} />
+                          <span style={{ fontSize: '12px', color: isActive ? '#e2e8f0' : '#94a3b8' }}>
+                            {sport}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
 
         {/* Filters */}
@@ -126,6 +181,12 @@ export default function ChioneCalendar({ events }: { events: Event[] }) {
 
         <div style={{ marginTop: 'auto', fontSize: '12px', color: '#334155' }}>
           {filtered.length} events
+        </div>
+
+        {/* Subscribe form */}
+        <div>
+          <div style={{ fontSize: '11px', letterSpacing: '0.15em', color: '#64748b', marginBottom: '12px' }}>STAY UPDATED</div>
+          <SubscribeForm />
         </div>
       </aside>
 
@@ -308,4 +369,77 @@ function formatDates(start: string, end: string | null): string {
   if (!end || end === start) return s.toLocaleDateString('en-US', { ...opts, year: 'numeric' });
   const e = new Date(end);
   return `${s.toLocaleDateString('en-US', opts)} – ${e.toLocaleDateString('en-US', { ...opts, year: 'numeric' })}`;
+}
+
+function SubscribeForm() {
+  const [email, setEmail] = useState('');
+  const [name, setName] = useState('');
+  const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+
+  async function handleSubmit() {
+    if (!email) return;
+    setStatus('loading');
+    try {
+      const res = await fetch('/api/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, name }),
+      });
+      if (res.ok) setStatus('success');
+      else setStatus('error');
+    } catch {
+      setStatus('error');
+    }
+  }
+
+  if (status === 'success') return (
+    <p style={{ fontSize: '12px', color: '#10b981', lineHeight: 1.6, margin: 0 }}>
+      Check your inbox to confirm your subscription.
+    </p>
+  );
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+      <input
+        type="text"
+        placeholder="Name (optional)"
+        value={name}
+        onChange={e => setName(e.target.value)}
+        style={{
+          background: '#1e293b', border: '1px solid #334155', borderRadius: '6px',
+          padding: '8px 10px', fontSize: '12px', color: '#e2e8f0', width: '100%',
+          boxSizing: 'border-box' as const, outline: 'none'
+        }}
+      />
+      <input
+        type="email"
+        placeholder="Email address"
+        value={email}
+        onChange={e => setEmail(e.target.value)}
+        onKeyDown={e => e.key === 'Enter' && handleSubmit()}
+        style={{
+          background: '#1e293b', border: '1px solid #334155', borderRadius: '6px',
+          padding: '8px 10px', fontSize: '12px', color: '#e2e8f0', width: '100%',
+          boxSizing: 'border-box' as const, outline: 'none'
+        }}
+      />
+      <button
+        onClick={handleSubmit}
+        disabled={status === 'loading'}
+        style={{
+          background: '#3b82f6', border: 'none', borderRadius: '6px',
+          padding: '8px', fontSize: '12px', color: 'white',
+          cursor: status === 'loading' ? 'not-allowed' : 'pointer',
+          opacity: status === 'loading' ? 0.7 : 1
+        }}
+      >
+        {status === 'loading' ? 'Subscribing...' : 'Subscribe to digest'}
+      </button>
+      {status === 'error' && (
+        <p style={{ fontSize: '11px', color: '#ef4444', margin: 0 }}>
+          Something went wrong. Try again.
+        </p>
+      )}
+    </div>
+  );
 }
