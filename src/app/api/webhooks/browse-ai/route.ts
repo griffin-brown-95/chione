@@ -1,5 +1,6 @@
 import { sql } from '@/lib/db';
 import { transformISUEvents } from '@/lib/transformers/isu';
+import { enrichEvent } from '@/lib/enrich';
 
 // Map your Browse.ai robot IDs to transformer functions
 const ROBOT_TRANSFORMERS: Record<string, (payload: any) => any[]> = {
@@ -21,6 +22,14 @@ export async function POST(request: Request) {
 
     // Upsert each event — update if source_url already exists
     for (const event of events) {
+      // Check if event already exists
+      const existing = await sql`
+        SELECT id FROM events WHERE source_url = ${event.source_url}
+      `;
+
+      const isNew = existing.length === 0;
+
+      // Upsert the event
       await sql`
         insert into events (
           title, start_date, end_date, source_url, source_name,
@@ -42,8 +51,26 @@ export async function POST(request: Request) {
           flag_image_url = excluded.flag_image_url,
           updated_at = now()
       `;
+      
+
+      // Only enrich brand new events
+      if (isNew) {
+        console.log(`[webhook] Starting enrichment for: ${event.title}`);
+        const enrichment = await enrichEvent(event);
+        console.log(`[webhook] Enrichment result:`, enrichment);
+        if (enrichment) {
+          await sql`
+            UPDATE events SET
+              airports = ${enrichment.airports},
+              city_description = ${enrichment.city_description},
+              travel_tips = ${enrichment.travel_tips}
+            WHERE source_url = ${event.source_url}
+          `;
+        }
+      }
     }
 
+    // ← ADD THIS
     return Response.json({ success: true, count: events.length });
 
   } catch (error) {
