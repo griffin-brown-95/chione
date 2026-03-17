@@ -30,9 +30,9 @@ Dates: ${event.start_date} to ${event.end_date ?? event.start_date}
 
 Respond ONLY with a JSON object, no markdown, no backticks:
 {
-  "airports": "2-3 nearest airports with IATA codes and approximate distance/travel time from venue city",
-  "city_description": "2-3 sentence description of the host city relevant to a sports traveler - venues, character, what to expect",
-  "travel_tips": "2-3 practical tips specific to this destination for a sports event attendee"
+  "airports": "List at most two nearest airports with IATA codes and approximate distance/travel time from venue city. Do not make this long",
+  "city_description": "One sentence description of the host city relevant to a sports traveler - venues, character, what to expect. Do not make this long",
+  "travel_tips": "Quick list of 2-3 fun things to do for this particular destination. Do not make this long"
 }`
         }],
       }),
