@@ -5,6 +5,7 @@ import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import listPlugin from '@fullcalendar/list';
 import { downloadICS, googleCalendarUrl, outlookWebUrl } from '@/lib/ics';
+import ChatPanel from '@/components/ChatPanel';
 
 const NGB_SPORTS: Record<string, string[]> = {
   'ISU': ['Figure Skating', 'Speed Skating', 'Short Track Speed Skating', 'Synchronized Skating'],
@@ -94,6 +95,13 @@ function getSource(sport: string): string {
   return 'Other';
 }
 
+interface EventMetadata {
+  airports?: string;
+  city_description?: string;
+  travel_tips?: string;
+  [key: string]: unknown;
+}
+
 interface Event {
   id: string;
   title: string;
@@ -105,9 +113,7 @@ interface Event {
   country: string | null;
   source_url: string;
   flag_image_url: string | null;
-  airports: string | null;
-  city_description: string | null;
-  travel_tips: string | null;
+  metadata: EventMetadata | null;
   source_name?: string | null;
 }
 
@@ -115,6 +121,8 @@ type Theme = typeof THEMES.dark;
 
 export default function ChioneCalendar({ events }: { events: Event[] }) {
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatContextEvent, setChatContextEvent] = useState<Event | null>(null);
   const [sportFilters, setSportFilters] = useState<Set<string>>(new Set());
   const [typeFilter, setTypeFilter] = useState<string>('All');
   const [countryFilter, setCountryFilter] = useState<string>('All');
@@ -333,6 +341,24 @@ export default function ChioneCalendar({ events }: { events: Event[] }) {
           <div style={{ fontSize: '11px', letterSpacing: '0.15em', color: t.textFaint, marginBottom: '12px' }}>STAY UPDATED</div>
           <SubscribeForm t={t} />
         </div>
+
+        {/* Ask Chione */}
+        <div>
+          <button
+            onClick={() => { setChatContextEvent(null); setChatOpen(true); setSelectedEvent(null); }}
+            style={{
+              width: '100%', background: '#3b82f6', border: 'none',
+              borderRadius: '8px', padding: '10px 14px', color: '#fff',
+              fontSize: '13px', fontWeight: 600, cursor: 'pointer',
+              letterSpacing: '0.05em',
+            }}
+          >
+            Ask Chione ↗
+          </button>
+          <div style={{ fontSize: '10px', color: t.textDim, marginTop: '6px', textAlign: 'center' }}>
+            Ask about events, travel &amp; logistics
+          </div>
+        </div>
       </aside>
 
       {/* Main content */}
@@ -383,8 +409,17 @@ export default function ChioneCalendar({ events }: { events: Event[] }) {
         />
       </main>
 
+      {/* Chat panel */}
+      {chatOpen && (
+        <ChatPanel
+          t={t}
+          onClose={() => setChatOpen(false)}
+          contextEvent={chatContextEvent}
+        />
+      )}
+
       {/* Event detail panel */}
-      {selectedEvent && (
+      {selectedEvent && !chatOpen && (
         <div style={{
           position: 'fixed', top: 0, right: 0, bottom: 0, width: '380px',
           background: t.sidebar, borderLeft: `1px solid ${t.border}`,
@@ -416,22 +451,22 @@ export default function ChioneCalendar({ events }: { events: Event[] }) {
             <DetailRow label="LOCATION" value={[selectedEvent.city, selectedEvent.country].filter(Boolean).join(', ')} t={t} />
             <DetailRow label="EVENT TYPE" value={selectedEvent.event_type} t={t} />
 
-            {selectedEvent.city_description && (
+            {selectedEvent.metadata?.city_description && (
               <div style={{ marginTop: '8px' }}>
                 <div style={{ fontSize: '10px', letterSpacing: '0.15em', color: t.textDim, marginBottom: '6px' }}>ABOUT THE CITY</div>
-                <p style={{ fontSize: '13px', color: t.textFaint, lineHeight: 1.7, margin: 0 }}>{selectedEvent.city_description}</p>
+                <p style={{ fontSize: '13px', color: t.textFaint, lineHeight: 1.7, margin: 0 }}>{selectedEvent.metadata.city_description}</p>
               </div>
             )}
-            {selectedEvent.airports && (
+            {selectedEvent.metadata?.airports && (
               <div style={{ marginTop: '8px' }}>
                 <div style={{ fontSize: '10px', letterSpacing: '0.15em', color: t.textDim, marginBottom: '6px' }}>NEAREST AIRPORTS</div>
-                <p style={{ fontSize: '13px', color: t.textFaint, lineHeight: 1.7, margin: 0 }}>{selectedEvent.airports}</p>
+                <p style={{ fontSize: '13px', color: t.textFaint, lineHeight: 1.7, margin: 0 }}>{selectedEvent.metadata.airports}</p>
               </div>
             )}
-            {selectedEvent.travel_tips && (
+            {selectedEvent.metadata?.travel_tips && (
               <div style={{ marginTop: '8px' }}>
                 <div style={{ fontSize: '10px', letterSpacing: '0.15em', color: t.textDim, marginBottom: '6px' }}>TRAVEL TIPS</div>
-                <p style={{ fontSize: '13px', color: t.textFaint, lineHeight: 1.7, margin: 0 }}>{selectedEvent.travel_tips}</p>
+                <p style={{ fontSize: '13px', color: t.textFaint, lineHeight: 1.7, margin: 0 }}>{selectedEvent.metadata.travel_tips}</p>
               </div>
             )}
             {selectedEvent.flag_image_url && (
@@ -439,7 +474,19 @@ export default function ChioneCalendar({ events }: { events: Event[] }) {
             )}
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '32px' }}>
+          <button
+            onClick={() => { setChatContextEvent(selectedEvent); setSelectedEvent(null); setChatOpen(true); }}
+            style={{
+              width: '100%', marginTop: '24px', background: `#3b82f610`,
+              border: `1px solid #3b82f640`, borderRadius: '8px',
+              padding: '10px 14px', color: '#3b82f6', fontSize: '12px',
+              cursor: 'pointer', letterSpacing: '0.05em',
+            }}
+          >
+            Ask Chione about this event ↗
+          </button>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '20px' }}>
             <div style={{ fontSize: '10px', letterSpacing: '0.15em', color: t.textDim, marginBottom: '4px' }}>ADD TO CALENDAR</div>
 
             <button onClick={() => downloadICS(selectedEvent)} style={{

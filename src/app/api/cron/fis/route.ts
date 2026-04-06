@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 import { scrapeAllFIS } from '@/lib/scrapers/fis';
-import { enrichEvent } from '@/lib/enrich';
 
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get('authorization');
