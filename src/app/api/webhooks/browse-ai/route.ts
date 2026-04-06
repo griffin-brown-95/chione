@@ -1,6 +1,5 @@
 import { sql } from '@/lib/db';
 import { transformISUEvents } from '@/lib/transformers/isu';
-import { enrichEvent } from '@/lib/enrich';
 
 // Map your Browse.ai robot IDs to transformer functions
 const ROBOT_TRANSFORMERS: Record<string, (payload: any) => any[]> = {
@@ -53,21 +52,6 @@ export async function POST(request: Request) {
       `;
       
 
-      // Only enrich brand new events
-      if (isNew) {
-        console.log(`[webhook] Starting enrichment for: ${event.title}`);
-        const enrichment = await enrichEvent(event);
-        console.log(`[webhook] Enrichment result:`, enrichment);
-        if (enrichment) {
-          await sql`
-            UPDATE events SET
-              airports = ${enrichment.airports},
-              city_description = ${enrichment.city_description},
-              travel_tips = ${enrichment.travel_tips}
-            WHERE source_url = ${event.source_url}
-          `;
-        }
-      }
     }
 
     // ← ADD THIS
