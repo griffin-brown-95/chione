@@ -3,22 +3,23 @@
 ## Project Overview
 Chione is a Winter Olympic sports event calendar and discovery platform. The name comes from the ancient Greek word for snow (χιών), connecting to the Olympic heritage of winter sports.
 
-The goal is to aggregate events across **all Winter Olympic sports** from multiple data sources, display them on a filterable calendar, and provide a Claude-powered chat interface for event discovery and travel planning.
+The goal is to aggregate events across **all Winter Olympic sports** from multiple data sources, display them on a filterable calendar and interactive map, and provide a Claude-powered chat interface for event discovery and travel planning.
 
 **Primary users:** OCOG (Organising Committee for the Olympic Games) staff and UOLF (Utah Olympic Legacy Foundation) staff. May eventually go public-facing.
 
 ## Tech Stack
 - **Frontend/Backend:** Next.js (deployed on Vercel)
 - **Database:** Vercel Postgres (Neon)
-- **Scraping:** Browse.ai (robots scrape event websites on a schedule, push via webhook) + a custom FIS cheerio scraper
+- **Scraping:** Browse.ai (robots scrape event websites on a schedule, push via webhook) + a custom FIS iCal scraper
 - **Data pipeline:** Browse.ai → webhook → Next.js API route → Postgres
 - **Calendar UI:** FullCalendar
+- **Map UI:** `react-simple-maps` v3.0.0 (no bundled types — manual `.d.ts` at `src/types/react-simple-maps.d.ts`); added to `transpilePackages` in `next.config.ts` to prevent ESM bundling issues
 - **Chat interface:** Claude API via `@anthropic-ai/sdk` (claude-sonnet-4-20250514), with tool use for live DB queries
 
 ## What It Does
 1. Scrapes event data from multiple Winter Olympic sport websites
 2. Normalizes and stores events in Postgres
-3. Displays events on a filterable calendar
+3. Displays events on a filterable calendar **and** an interactive world map
 4. Allows users to download .ics files for events
 5. Provides a Claude-powered chat — users can ask about events, travel, logistics, etc. Claude queries the live database via tool use rather than receiving a static context dump
 
@@ -28,11 +29,21 @@ Each sport/federation gets its own Browse.ai robot and its own transformer funct
 | Source | Sport(s) | Method | Status |
 |--------|----------|--------|--------|
 | ISU (isu.org/events) | Figure Skating, Speed Skating, Short Track, Synchronized Skating | Browse.ai robot → webhook | ✅ Active |
-| FIS (fis-ski.com) | Alpine, Cross Country, Ski Jumping, Freestyle, Freeski, Snowboard, Nordic Combined, Freeride, Para disciplines | Custom cheerio scraper (`src/lib/scrapers/fis.ts`) via daily cron | ✅ Active |
+| FIS (data.fis-ski.com) | Alpine, Cross Country, Ski Jumping, Freestyle, Snowboard, Nordic Combined, Freeride | Official iCal feed (`src/lib/scrapers/fis.ts`) via daily cron | ✅ Active |
 
 More sources to add: IBU (biathlon), IBSF (bobsled/luge/skeleton).
 
 **On adding new sources:** Before building a scraper, check the federation's network traffic (DevTools) for an internal JSON API, and check for a published `.ics` calendar feed. Either is more stable than HTML scraping. If scraping is unavoidable, prefer a Browse.ai robot over a hand-rolled cheerio scraper.
+
+### FIS iCal Feed Notes
+FIS publishes official iCalendar feeds at:
+```
+https://data.fis-ski.com/services/public/icalendar-feed-fis-events.html
+  ?seasoncode=2026&sectorcode=CC&categorycode=WC
+```
+Both `sectorcode` and `categorycode` are required. The season code is the year the season ends (e.g. 2025/26 → `2026`). The scraper iterates a matrix of sector codes × category codes (`WC`, `WSC`, `OWG`) and fetches all.
+
+Each VEVENT represents a single race, not a multi-day event stop — so a World Cup weekend produces multiple rows (one per race). The `Result/Startlist` URL embedded in the DESCRIPTION field is used as `source_url` for deduplication. Race-level metadata (gender, event detail, FIS UID, sector/category codes) is stored in the `metadata` JSONB column.
 
 ## Database Design Philosophy
 **The schema must stay flexible.** As new data sources are added, the fields available will vary. Design decisions:
@@ -143,17 +154,86 @@ Date format: `"7 Aug - 10 Aug, 2025"` or `"31 Oct - 2 Nov, 2025"`
 
 **UI:** `ChatPanel.tsx` — fixed right-side panel (480px). Opens from "Ask Chione ↗" in the sidebar, or "Ask Chione about this event ↗" inside the event detail panel (which auto-sends a context message). Suggested prompts shown when empty.
 
+## Three-Tab Layout (`ChioneCalendar.tsx`)
+The main UI has three tabs in the header: **Ask Chione**, **Calendar**, **Map**.
+
+- **Ask Chione** — embedded full-page chat with suggested prompts; shares session state with the slide-out `ChatPanel`
+- **Calendar** — FullCalendar (dayGrid + list views) with sport/type/country filters in a left sidebar
+- **Map** — interactive world map (`MapView.tsx`) with the same filter sidebar as the calendar
+
+All three tabs share the same filter state (`sportFilters`, `typeFilter`, `countryFilter`) and the same `filtered` events array. The event detail panel is a shared overlay (`zIndex: 150`) that sits above all tabs.
+
+## Map View (`src/components/MapView.tsx`)
+`MapView` is loaded via `dynamic(() => import('@/components/MapView'), { ssr: false })` because `react-simple-maps` accesses browser APIs at import time.
+
+**Key implementation details:**
+- Projection: `geoNaturalEarth1`, scale 155, 800×420 viewport
+- World topology: `countries-110m.json` from jsDelivr CDN (World Atlas TopoJSON)
+- Events with the same city resolve to exactly one pin; multi-event pins show a popover on click listing all events sorted by date
+- Pin radius and font sizes are divided by `zoom` inside `ZoomableGroup` to stay constant screen size as you zoom
+- `CITY_COORDS` table (~130 venues, keyed by lowercased/diacritic-stripped city name) resolves event locations; falls back to `COUNTRY_COORDS` (~45 IOC centroids) if city not found
+- Clicking a country calls `computeCountryFit` (walks GeoJSON coordinate tree → bounding box → center + zoom) and animates the map to fit that country
+- Hovering a country shows a tooltip with the full country name and count of filtered events in that country (uses `ISO_TO_IOC` to map numeric geo IDs to IOC codes)
+- Country labels rendered as `Marker` components at `COUNTRY_LABEL_KEYS` positions, opacity ~0.4, font size divided by zoom
+
+## NGB-Family Colour System
+Event colours are assigned by NGB (federation), with each sport getting a distinct shade within the NGB's colour family. There is **no dynamic colour mode** — colour is always by sport.
+
+```typescript
+// NGB base colours (used for fallback and the sidebar legend)
+const SOURCE_COLORS = { FIS: '#2563eb', ISU: '#7c3aed', IBU: '#b45309', IBSF: '#059669' };
+
+// Per-sport shades
+const NGB_SPORT_COLORS = {
+  // FIS — blues (deep → light)
+  'Alpine Skiing':          '#1e3a8a',
+  'Nordic Combined':        '#1e40af',
+  'Cross Country':          '#1d4ed8',
+  'Ski Jumping':            '#2563eb',
+  'Snowboard':              '#3b82f6',
+  'Freestyle':              '#60a5fa',
+  'Freeski Park and Pipe':  '#38bdf8',
+  'Freeride':               '#0ea5e9',
+  'Para Alpine':            '#1e3a8a',
+  'Para Cross Country':     '#1d4ed8',
+  'Para Snowboard':         '#3b82f6',
+  // ISU — violets
+  'Figure Skating':             '#5b21b6',
+  'Speed Skating':              '#7c3aed',
+  'Short Track Speed Skating':  '#8b5cf6',
+  'Synchronized Skating':       '#a78bfa',
+  // IBU — amber
+  'Biathlon':               '#b45309',
+  // IBSF — emerald
+  'Bobsled':                '#065f46',
+  'Luge':                   '#047857',
+  'Skeleton':               '#059669',
+};
+```
+
+`getEventColor(e: Event): string` looks up `NGB_SPORT_COLORS[e.sport]` first, then falls back to `SOURCE_COLORS[source_name]`. **No `colorMode` parameter anywhere.**
+
+The sidebar shows a simple 4-dot "COLOUR KEY" legend (FIS / ISU / IBU / IBSF) in both the Calendar and Map sidebars. There is no "by sport" or "by event type" dynamic legend.
+
+## FullCalendar Colour Fix
+Tailwind v4's preflight CSS reset conflicts with FullCalendar's CSS variable colour system. Fixed by:
+1. Pre-building a `EVENT_COLOR_CSS` string with one `!important` rule per unique colour (derived from `NGB_SPORT_COLORS` + `SOURCE_COLORS`)
+2. Injecting it into the `<style>` block inside the calendar pane
+3. Using `eventClassNames` to apply a stable CSS class (`chione-evt-{hex}`) to each event
+4. Setting `textColor: '#ffffff'` on all calendar events
+
 ## Cron Jobs (vercel.json)
 - `/api/cron/digest` — Monday 15:00 UTC — weekly email digest to confirmed subscribers via Resend
-- `/api/cron/fis` — Daily 06:00 UTC — scrapes FIS discipline pages, inserts new events
+- `/api/cron/fis` — Daily 06:00 UTC — scrapes FIS iCal feeds, upserts new/updated events
 
 The enrichment cron (`/api/cron/enrich`) has been removed. Pre-baked enrichment fields (`airports`, `city_description`, `travel_tips`) were replaced by the chat interface.
 
 ## Frontend Philosophy
-- Calendar is the primary visualization; chat is the primary discovery interface
+- Calendar and Map are the primary visualizations; chat is the primary discovery interface
 - Add tabs, grouped views, or additional filters **only when the data from multiple sources supports it**
 - Don't build UI for fields that only one source provides
-- `ChioneCalendar.tsx` uses inline styles throughout (not Tailwind classes) — match this pattern in any new components
+- `ChioneCalendar.tsx` and `MapView.tsx` use inline styles throughout (not Tailwind classes) — match this pattern in any new components
+- `MapView.tsx` must always be loaded with `ssr: false` via `next/dynamic`
 
 ## Environment Variables
 ```
@@ -180,6 +260,8 @@ Migration files live in `/migrations`. Run them in order against Neon.
 - **Flexible schema** — `metadata JSONB` means adding new sources doesn't require schema migrations
 - **No pre-baked enrichment** — static travel info fields (airports, city description, travel tips) were removed; Claude answers these questions dynamically via the chat interface with live DB tool use
 - **Chat tool use over context stuffing** — Claude queries the DB via tools rather than receiving all events in the prompt, keeping context lean and responses current
+- **NGB colour families over dynamic colour mode** — event colours are fixed per sport (within an NGB's colour family); no switching between "by sport" / "by event type" modes simplifies the codebase and produces a more consistent visual identity
+- **react-simple-maps for the map tab** — lightweight SVG-based world map; installed with `--legacy-peer-deps` and added to `transpilePackages`; manual type declarations in `src/types/react-simple-maps.d.ts`
 
 ## Project Name Origin
 Chione (Χιόνη) — Greek nymph whose name derives from χιών (khiōn), the ancient Greek word for snow. Daughter of Boreas, god of the north wind. Connects to the Olympic heritage of winter sports and the first Winter Olympic Games held in Chamonix, 1924.
